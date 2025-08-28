@@ -2,6 +2,8 @@
 
 A desktop GUI application for managing job postings with live status updates from a standalone, isolated scraper process. Designed to help you track, filter, and organize job listings efficiently, with a focus on a clean, interactive interface.
 
+ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
+
 ## Features
 
 - View job listings with key details: title, company, location, type, and description  
