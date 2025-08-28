@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36414.22 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "softwareforjobhunters_showcase", "softwareforjobhunters_showcase\softwareforjobhunters_showcase.pyproj", "{8808B77F-95FF-4BF1-9BB2-DEF145C49ACA}"
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "softwareforjobhunters_showcase", "softwareforjobhunters_showcase.pyproj", "{8808B77F-95FF-4BF1-9BB2-DEF145C49ACA}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -18,6 +18,6 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {60443C62-1B21-4ED9-8AD7-2376A9A861AC}
+		SolutionGuid = {4140002C-155F-49B4-99FA-EFE441A9C72C}
 	EndGlobalSection
 EndGlobal
