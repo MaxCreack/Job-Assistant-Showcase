@@ -315,6 +315,11 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+.env
+excludedwords.py
+scraper_config.json
+scraper_status.json
+scraped_jobs.jsonl
 
 # Cake - Uncomment if you are using it
 # tools/**
