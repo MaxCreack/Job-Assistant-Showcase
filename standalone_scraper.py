@@ -17,7 +17,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import random
 from datetime import datetime, timedelta
-from excludedwords import EXCLUDE_TITLES, EXCLUDE_COMPANIES
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -43,6 +42,8 @@ click_next_id = os.getenv("click_next")
 STATUS_FILE = "scraper_status.json"
 JOBS_FILE = "scraped_jobs.jsonl" 
 STOP_FILE = "scraper_stop.flag"
+EXCLUDED_WORDS_FILE ="excludedwords.json"
+
 
 # Global driver reference for cleanup
 _driver = None
@@ -113,6 +114,26 @@ def write_job_data(job_data):
     except Exception as e:
         print(f"Error writing job data: {e}")
 
+def load_excluded_words():
+    """Load excluded titles and companies from the JSON file."""
+    if not os.path.exists(EXCLUDED_WORDS_FILE):
+        print("Scraper: Excluded words file not found, using defaults.")
+        return [], []
+
+    with open(EXCLUDED_WORDS_FILE, "r", encoding="utf-8") as f:
+        try:
+            data = json.load(f)
+            titles = data.get("RAW_KEYWORDS_TO_EXCLUDE_TITLES", [])
+            companies = data.get("RAW_KEYWORDS_TO_EXCLUDE_COMPANIES", [])
+        except json.JSONDecodeError:
+            print("Scraper: Error decoding excluded words file.")
+            return [], []
+
+    titles = [t.lower() for t in titles]
+    companies = [c.lower() for c in companies]         
+
+    return titles, companies
+
 def handle_popup_if_present(driver):
     try:
         if is_element_present(driver, By.ID, popup_id):
@@ -157,9 +178,9 @@ def get_job_hours(time_str):
             return 0
     return 0
 
-def job_is_excluded(title, company):
-    title_lower = title.lower()
-    company_lower = company.lower()
+def job_is_excluded(titles, companies):
+    title_lower = titles.lower()
+    company_lower = companies.lower()
 
     if title_lower == "אנגלית":
         return False
@@ -273,13 +294,14 @@ def load_selected_hours():
     return None
 
 def main():
-    global _driver
+    global _driver, EXCLUDE_TITLES, EXCLUDE_COMPANIES
     
     # Register signal handlers and cleanup
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     atexit.register(cleanup_driver)
     atexit.register(lambda: update_status("stopped", "Process exited"))
+    EXCLUDE_TITLES, EXCLUDE_COMPANIES = load_excluded_words()
     
     # Clean up any existing files
     for file in [STATUS_FILE, JOBS_FILE]:
@@ -331,7 +353,6 @@ def main():
                     EC.presence_of_all_elements_located((By.CLASS_NAME, job_content_id))
                 )
                 print("Waiting for job listings")
-                driver.save_screenshot("debug_screenshot1.png")
                 time.sleep(random.uniform(1, 3))
             except TimeoutException:
                 driver.save_screenshot("debug_screenshot2.png")
@@ -364,7 +385,7 @@ def main():
                     driver.quit()
                     update_status("stopped", "Stop flag detected")
                     break
-                    
+                  
                 try:
                     actions.move_to_element(job).pause(random.uniform(0.3, 0.7)).perform()
                     
@@ -389,7 +410,7 @@ def main():
                     )
                     time_posted = job.find_element(By.CLASS_NAME, time_posted_id).text.strip()
                     link = job.find_element(By.CSS_SELECTOR, f"[class*='{link_id}'] a.N").get_attribute("href")
-                    
+
                     # Time logic
                     job_hour = get_job_hours(time_posted)
                     if job_hour > selected_hours:  
@@ -403,7 +424,7 @@ def main():
                     
                     # Exclude jobs based on keywords
                     if job_is_excluded(title, company):
-                        print(f"Excluded: {title}, Posted: {time_posted}.")
+                        print(f"Excluded: {title}, Posted: {time_posted}.  Job: {i}/15")
                         continue
                         
                     # Prepare job data
@@ -422,13 +443,13 @@ def main():
                     # Validate critical fields
                     if not job_data["Title"] or not job_data["Company"]:
                         print(f"Skipping job due to missing critical data")
-                        continue
+                        continue                              
                         
                     # Write job data to file
                     write_job_data(job_data)
                     jobs_scraped += 1
                     
-                    print(f"SCRAPED: {title} at {company} - Posted: {time_posted}")
+                    print(f"SCRAPED: {title} at {company} - Posted: {time_posted}, Job: {i}/15")
                     
                     if should_stop():
                         driver.quit()

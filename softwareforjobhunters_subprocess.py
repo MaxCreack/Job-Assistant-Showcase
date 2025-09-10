@@ -6,13 +6,16 @@ import time
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
     QPushButton, QVBoxLayout, QWidget, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QAbstractItemView, QDialog, QComboBox
+    QMessageBox, QAbstractItemView, QDialog, QComboBox, QTextEdit, QMenu
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QKeySequence, QShortcut, QIntValidator
 from database import Database  
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from standalone_scraper import update_status
+
+
 load_dotenv()
 dbname = os.getenv("dbname")
 host = os.getenv("host")
@@ -35,6 +38,8 @@ class JobHelperApp(QMainWindow):
         self.status_file = "scraper_status.json"
         self.jobs_file = "scraped_jobs.jsonl"
         self.stop_file = "scraper_stop.flag"
+        self.excluded_words_file = "excludedwords.json"
+        self.exclude_titles, self.exclude_companies = self.load_excluded_words()
         self.processed_lines = 0  
         
         self.db_config = {
@@ -72,17 +77,19 @@ class JobHelperApp(QMainWindow):
         self.hide_seen_button = QPushButton("Hide Seen")
         self.hide_seen_button.setCheckable(True)
         self.hide_seen_button.clicked.connect(lambda: self.hide_functionality("Seen", self.hide_seen_button))
-        
-        # Add refresh button and status label
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self.load_jobs)
         self.status_label = QLabel("Ready")
+        self.excluded_words_button = QPushButton("Excluded Words")
+        self.excluded_words_button.clicked.connect(self.excluded_words)
 
+        # Layout arrangement
         filter_layout.addWidget(QLabel("Hours:"))
         filter_layout.addWidget(self.hours_input)
         filter_layout.addWidget(QLabel("Search:"))
         filter_layout.addWidget(self.search_input)
         filter_layout.addWidget(self.scrape_button)
+        filter_layout.addWidget(self.excluded_words_button)
         filter_layout.addWidget(self.refresh_button)
         filter_layout.addWidget(self.hide_applied_button)
         filter_layout.addWidget(self.hide_seen_button)
@@ -103,6 +110,27 @@ class JobHelperApp(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)  
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_table_menu)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+        QTableWidget {
+            background-color: #ffffff;
+            alternate-background-color: #f5f5f5;
+            selection-background-color: #fcfcfc;  
+            selection-color: #000000;         
+        }
+        QTableWidget::item {
+            border: 1px solid #d0d0d0;
+            padding: 2px;
+        }
+        QTableWidget::item:selected {
+            background-color: white;
+            color: black;
+            border: 1px solid #000000;
+        }
+        """)
         layout.addWidget(self.table)
         copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
         copy_shortcut.activated.connect(self.copy_selection_to_clipboard)
@@ -113,11 +141,108 @@ class JobHelperApp(QMainWindow):
         self.mark_seen_button.clicked.connect(lambda: self.update_status("Seen"))
         self.mark_applied_button = QPushButton("Mark Applied")
         self.mark_applied_button.clicked.connect(lambda: self.update_status("Applied"))
-
         button_layout.addWidget(self.mark_seen_button)
         button_layout.addWidget(self.mark_applied_button)
         layout.addLayout(button_layout)
 
+    def show_table_menu(self, pos):
+        # Context Menu
+        row = self.table.rowAt(pos.y())
+        col = self.table.columnAt(pos.x())
+        if row == -1 or col == -1:
+            return
+        global_pos = self.table.mapToGlobal(pos)
+        menu = QMenu(self)
+        menu.addAction("Copy Selection", self.copy_selection_to_clipboard)
+        menu.addAction("Mark Seen", lambda: self.update_status("Seen"))
+        menu.addAction("Mark Applied", lambda: self.update_status("Applied"))
+        menu.popup(global_pos)
+
+    def save_excluded_words(self, titles, companies):
+        """Save excluded titles and companies into the JSON file."""
+        data = {
+            "RAW_KEYWORDS_TO_EXCLUDE_TITLES": titles,
+            "RAW_KEYWORDS_TO_EXCLUDE_COMPANIES": companies
+        }
+        with open(self.excluded_words_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def load_excluded_words(self):
+        """Load excluded titles and companies from the JSON file."""
+        if not os.path.exists(self.excluded_words_file):
+            print("Excluded words file not found, using defaults.")
+            return [], []
+
+        with open(self.excluded_words_file, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                titles = data.get("RAW_KEYWORDS_TO_EXCLUDE_TITLES", [])
+                companies = data.get("RAW_KEYWORDS_TO_EXCLUDE_COMPANIES", [])
+            except json.JSONDecodeError:
+                print("Error decoding excluded words file.")
+                return [], []
+
+        return titles, companies
+
+    def excluded_words(self):
+        """Open dialog to manage excluded words"""
+    
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Manage Excluded Words")
+        dialog.resize(500, 400) 
+        dialog_layout = QVBoxLayout(dialog)
+    
+        # Excluded Titles
+        title_label = QLabel("Excluded Titles (one per line):")
+        title_text = QTextEdit()
+        title_text.setPlainText("\n".join(self.exclude_titles)) 
+        title_text.setMinimumHeight(150)  
+        title_text.setPlaceholderText("Enter titles to exclude, one per line.")
+        title_text.setStyleSheet("font-family: monospace;")
+    
+        # Excluded Companies
+        company_label = QLabel("Excluded Companies (one per line):")
+        company_text = QTextEdit()
+        company_text.setPlainText("\n".join(self.exclude_companies))
+        company_text.setMinimumHeight(150) 
+        company_text.setPlaceholderText("Enter companies to exclude, one per line.")
+        company_text.setStyleSheet("font-family: monospace;")
+    
+        # Layout
+        dialog_layout.addWidget(title_label)
+        dialog_layout.addWidget(title_text)
+        dialog_layout.addWidget(company_label)
+        dialog_layout.addWidget(company_text)
+    
+        # Save / Cancel buttons
+        button_layout = QHBoxLayout()
+    
+        def handle_save():
+            try:
+                new_titles = [t.strip() for t in title_text.toPlainText().splitlines() if t.strip()]
+                new_companies = [c.strip() for c in company_text.toPlainText().splitlines() if c.strip()]
+
+                self.save_excluded_words(new_titles, new_companies)
+                self.exclude_titles = new_titles
+                self.exclude_companies = new_companies
+
+                dialog.accept()
+                QMessageBox.information(self, "Success", "Excluded words saved successfully!")
+            
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to save excluded words: {e}")
+    
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(handle_save)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+
+        button_layout.addWidget(save_btn)
+        button_layout.addWidget(cancel_btn)
+        dialog_layout.addLayout(button_layout)
+
+        dialog.exec()
+            
     def ask_for_number(self, title="Select a number", label="Choose a value:", min_value=1, max_value=999):
         """Prompt user to select a number within a range"""
 
@@ -146,6 +271,7 @@ class JobHelperApp(QMainWindow):
         return None        
    
     def on_filter_change(self):
+        """Handle changes in filter inputs"""
         hours_text = self.hours_input.text().strip()
         search_text = self.search_input.text().strip()
         hours_value = None
@@ -301,11 +427,11 @@ class JobHelperApp(QMainWindow):
         selected_row = self.table.currentRow()
         if selected_row >= 0:
             try:
-                job_id = int(self.table.item(selected_row, 0).text())  # hidden ID column
+                job_id = int(self.table.item(selected_row, 0).text())
                 self.db.update_job_status(job_id, status)
                 self.db.mark_job_seen(job_id)
-                self.table.setItem(selected_row, 9, QTableWidgetItem(status))  # update table
-                self.load_jobs()  # refresh table
+                self.table.setItem(selected_row, 9, QTableWidgetItem(status))  
+                self.load_jobs()  
                 print(f"Job {job_id} marked as {status}")
             except Exception as e:
                 print(f"Error updating job status: {e}")
@@ -313,10 +439,14 @@ class JobHelperApp(QMainWindow):
 
     def toggle_scraper(self):
         """Start or stop the scraper subprocess"""
+        if self.excluded_words_button.isEnabled() and self.excluded_words_button.isEnabled() is False:
+            QMessageBox.warning(self, "Warning", "Cannot change excluded words while scraper is running.")
+            return
 
         if self.scraper_process and self.scraper_process.poll() is None:
-            # Scraper is running, stop it
-            self.stop_scraper()
+            QTimer.singleShot(3000, self.stop_scraper)
+            self.scrape_button.setText("Stopping...")
+            self.scrape_button.setEnabled(False)
         else:
             # Ask user for hours
             selected_hours = self.ask_for_number(
@@ -332,6 +462,7 @@ class JobHelperApp(QMainWindow):
                     with open("scraper_config.json", 'w', encoding="utf-8") as f:
                         json.dump(config, f, ensure_ascii=False, indent=2)
                     self.start_scraper()
+                    self.excluded_words_button.setEnabled(False)
                 except Exception as e:
                     print(f"Error writing config file: {e}")
                     QMessageBox.warning(self, "Error", "Could not save scraper configuration. Scraper will not start.")
@@ -398,6 +529,8 @@ class JobHelperApp(QMainWindow):
             print(f"Error stopping scraper: {e}")
         finally:
             self.scraper_cleanup()
+            self.excluded_words_button.setEnabled(True)
+            self.scrape_button.setEnabled(True)
 
     def scraper_cleanup(self):
         """Clean up after scraper stops"""
@@ -405,6 +538,7 @@ class JobHelperApp(QMainWindow):
         self.scrape_button.setText("Scrape Now")
         self.status_label.setText("Ready")
         self.scraper_process = None
+        self.excluded_words_button.setEnabled(True)
         
         # Clean up communication files
         for file_path in [self.stop_file]:
@@ -481,7 +615,7 @@ class JobHelperApp(QMainWindow):
                 
                 try:
                     job_data = json.loads(line)
-                    
+
                     # Insert into database
                     try:
                         self.db.insert_job_to_db(job_data)
