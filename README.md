@@ -13,5 +13,4 @@ ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
 - Copy selected job information to the clipboard  
 - Integrated standalone scraper process that runs safely and independently (agostic by default)
 
-- <img width="3839" height="2061" alt="Screenshot 2025-08-28 152631" src="https://github.com/user-attachments/assets/58c23104-5914-4ede-8ed5-589d1163d06e" />
-
+<img width="3839" height="2062" alt="Screenshot 2025-09-09 124253" src="https://github.com/user-attachments/assets/bd016530-6e94-4188-85e4-f0530b696744" />
