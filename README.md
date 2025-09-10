@@ -7,10 +7,11 @@ ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
 ## Features
 
 - View job listings with key details: title, company, location, type, and description  
-- Mark jobs as "Seen" or "Applied" directly from the GUI  
+- Mark jobs as "Seen" or "Applied" directly from the GUI or from a right click popup menu
 - Hide or show jobs based on status  
 - Search and filter by keywords or posting age  
-- Copy selected job information to the clipboard  
-- Integrated standalone scraper process that runs safely and independently (agostic by default)
+- Copy selected job information to the clipboard
+- Integrated standalone scraper process that runs safely and independently
+- Built-in excluded words system so that you can adjust titles/comapnies you don't want to see on the fly
 
 <img width="3839" height="2062" alt="Screenshot 2025-09-09 124253" src="https://github.com/user-attachments/assets/bd016530-6e94-4188-85e4-f0530b696744" />
