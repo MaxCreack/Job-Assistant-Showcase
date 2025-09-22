@@ -1,17 +1,25 @@
-# Job Hunt Assistant GUI
+# Job Hunter Assistant  
 
-A desktop GUI application for managing job postings with live status updates from a standalone, isolated scraper process. Designed to help you track, filter, and organize job listings efficiently, with a focus on a clean, interactive interface.
+**A desktop application that helps job seekers streamline their search with automated scraping, database tracking, and an intuitive GUI.**  
+
+This project combines **Python, Selenium, PostgreSQL, and PyQt6** to create a complete workflow: jobs are scraped automatically from job boards, stored in a structured database, and presented in a user-friendly interface where applicants can track their progress. 
 
 ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
 
-## Features
+## Features  
 
-- View job listings with key details: title, company, location, type, and description  
-- Mark jobs as "Seen" or "Applied" directly from the GUI or from a right click popup menu
-- Hide or show jobs based on status  
-- Search and filter by keywords or posting age  
-- Copy selected job information to the clipboard
-- Integrated standalone scraper process that runs safely and independently
-- Built-in excluded words system so that you can adjust titles/comapnies you don't want to see on the fly
+- **Automated Job Scraping** – Collects job postings directly from job boards using a browser automation engine.  
+- **Job Management Database** – Stores job postings in PostgreSQL with duplicate prevention and application tracking.  
+- **Desktop GUI** – Provides a clean, intuitive interface to browse, search, and update job statuses.  
+- **Smart Filtering** – Lets users filter by keywords, posting time, or exclude unwanted companies and job titles.  
+- **Application Tracking** – Mark jobs as *Applied* or *Seen* to stay organized.  
+
+## Tech Stack  
+
+- **Language:** Python 3  
+- **Frontend:** PyQt6 (desktop GUI)  
+- **Database:** PostgreSQL  
+- **Scraping:** Selenium + undetected-chromedriver  
+- **Other Tools:** dotenv, psutil  
 
 <img width="3839" height="2062" alt="Screenshot 2025-09-09 124253" src="https://github.com/user-attachments/assets/bd016530-6e94-4188-85e4-f0530b696744" />
