@@ -1,4 +1,4 @@
-# Job Hunter Assistant  
+# Job Hunt Assistant  
 
 **A desktop application that helps job seekers streamline their search with automated scraping, database tracking, and an intuitive GUI.**  
 
