@@ -2,7 +2,7 @@
 
 **A desktop application that helps job seekers streamline their search with automated scraping, database tracking, and an intuitive GUI.**  
 
-This project combines **Python, Selenium, PostgreSQL, and PyQt6** to create a complete workflow: jobs are scraped automatically from job boards, stored in a structured database, and presented in a user-friendly interface where applicants can track their progress. 
+This project combines **Python, Selenium, PostgreSQL+SQLite, and PyQt6** to create a complete workflow: jobs are scraped automatically from job boards, stored in a structured database, and presented in a user-friendly interface where applicants can track their progress. 
 
 ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
 
@@ -18,7 +18,7 @@ ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
 
 - **Language:** Python 3  
 - **Frontend:** PyQt6 (desktop GUI)  
-- **Database:** PostgreSQL  
+- **Database:** PostgreSQL + SQLite (For production distrubtion)
 - **Scraping:** Selenium + undetected-chromedriver  
 - **Other Tools:** dotenv, psutil  
 
