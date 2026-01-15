@@ -1,16 +1,36 @@
-# Job Hunt Assistant GUI
+# Job Hunt Assistant  
 
-A desktop GUI application for managing job postings with live status updates from a standalone, isolated scraper process. Designed to help you track, filter, and organize job listings efficiently, with a focus on a clean, interactive interface.
+**A desktop application that helps job seekers streamline their search with automated scraping, database tracking, and an intuitive GUI.**  
+
+This project combines **Python, Selenium, PostgreSQL+SQLite, and PyQt6** to create a complete workflow: jobs are scraped automatically from job boards, stored in a structured database, and presented in a user-friendly interface where applicants can track their progress. 
 
 ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
 
-## Features
+## Features  
 
-- View job listings with key details: title, company, location, type, and description  
-- Mark jobs as "Seen" or "Applied" directly from the GUI  
-- Hide or show jobs based on status  
-- Search and filter by keywords or posting age  
-- Copy selected job information to the clipboard  
-- Integrated standalone scraper process that runs safely and independently (agostic by default)
+• **Intelligent Web Scraping System:** Developed an automated job search tool using Selenium and Chrome automation that intelligently collects job listings from multiple websites while evading bot detection
 
-<img width="3839" height="2062" alt="Screenshot 2025-09-09 124253" src="https://github.com/user-attachments/assets/bd016530-6e94-4188-85e4-f0530b696744" />
+• **Clean, Intuitive Desktop Interface:** Built a PyQt5 application with a searchable job listing table where users can view, filter, and manage opportunities all in one place
+
+• **Local Database Storage:** Implemented a SQLite database with proper data relationships and constraints, storing job information securely on the user's computer for reliable access and historical searches
+
+• **Anti-Detection Technology:** Engineered stealth browser techniques including JavaScript injection, randomized scrolling patterns, and user-agent spoofing to maintain reliable scraping without blocking
+
+• **Advanced Search & Filtering:** Created intelligent filtering that lets users search by keywords, job posting date, company, and job type—with one-click hide/show toggles for unwanted listings
+
+• **Smart Resource Management:** Designed automatic cleanup processes that terminate Chrome processes, clear temporary files, and manage memory efficiently to prevent system slowdown
+
+• **Production-Ready Executable:** Packaged the entire application as standalone executables using PyInstaller, allowing non-technical users to run the tool without Python knowledge
+
+• **Robust Error Handling & Logging:** Implemented comprehensive logging across all modules with graceful failure handling, signal interception (SIGTERM/SIGINT), and detailed status reporting for troubleshooting
+
+## Tech Stack  
+
+• **Language:** Python 3  
+• **Frontend:** PyQt6 (desktop GUI)  
+• **Database:** PostgreSQL + SQLite (For production distrubtion)
+• **Scraping:** Selenium + undetected-chromedriver  
+• **Other Tools:** dotenv, psutil  
+
+<img width="3839" height="2064" alt="Screenshot 2026-01-15 125922" src="https://github.com/user-attachments/assets/e846ac3e-e557-4857-8ea4-3c6ef9670d66" />
+
