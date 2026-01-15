@@ -32,4 +32,5 @@ ANY "SENSITIVE" INFORMATION HAS BEEN COVERED (Company Names, Links etc)
 • **Scraping:** Selenium + undetected-chromedriver  
 • **Other Tools:** dotenv, psutil  
 
-<img width="3839" height="2062" alt="Screenshot 2025-09-09 124253" src="https://github.com/user-attachments/assets/bd016530-6e94-4188-85e4-f0530b696744" />
+<img width="3839" height="2064" alt="Screenshot 2026-01-15 125922" src="https://github.com/user-attachments/assets/e846ac3e-e557-4857-8ea4-3c6ef9670d66" />
+
