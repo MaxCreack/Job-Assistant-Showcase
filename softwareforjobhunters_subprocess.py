@@ -2,39 +2,50 @@ import sys
 import os
 import json
 import subprocess
-import time
+import logging
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
     QPushButton, QVBoxLayout, QWidget, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QAbstractItemView, QDialog, QComboBox, QTextEdit, QMenu
+    QMessageBox, QAbstractItemView, QDialog, QComboBox, QTextEdit, QMenu,
+    QCheckBox, QMenuBar
 )
-from PyQt6.QtCore import Qt, QTimer, QPoint
+from PyQt6.QtCore import Qt, QTimer, QSettings
 from PyQt6.QtGui import QKeySequence, QShortcut, QIntValidator
-from database import Database  
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
-from standalone_scraper import update_status
 
+logger = logging.getLogger("job_helper.app")
+logger.setLevel(logging.DEBUG)
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
 
-load_dotenv()
-dbname = os.getenv("dbname")
-host = os.getenv("host")
-user = os.getenv("user")
-password = os.getenv("password")
+if not logger.handlers:
+    log_file = log_dir / "job_helper_app.log"
+    fh = logging.FileHandler(log_file, encoding='utf-8')
+    ch = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+from database import Database
+from scrapers import list_available_scrapers  
+
 
 class JobHelperApp(QMainWindow):
     def __init__(self, db):
-        dbname = os.getenv("dbname")
-        host = os.getenv("host")
-        user = os.getenv("user")
-        password = os.getenv("password")
         super().__init__()
         self.db = db 
+        self.settings = QSettings("Baluma", "JobHelperApp")
+        self.never_show_delete_warning = self.settings.value("never_show_delete_warning", False, type=bool)
         self.scraper_process = None
         self.scraper_timer = QTimer()
         self.scraper_timer.timeout.connect(self.check_scraper_status)
+        self.hide_applied = False
+        self.hide_seen = False
         
-        # File paths for subprocess communication
         self.status_file = "scraper_status.json"
         self.jobs_file = "scraped_jobs.jsonl"
         self.stop_file = "scraper_stop.flag"
@@ -42,26 +53,35 @@ class JobHelperApp(QMainWindow):
         self.exclude_titles, self.exclude_companies = self.load_excluded_words()
         self.processed_lines = 0  
         
-        self.db_config = {
-            'host': host,
-            'dbname': dbname,
-            'user': user,
-            'password': password
-        }
         self.setWindowTitle("Software for Job Hunting")
         self.setGeometry(100, 100, 900, 600)
         self.setup_ui()
         self.load_jobs() 
 
     def setup_ui(self):
-        # Main container
         container = QWidget()
         self.setCentralWidget(container)
         layout = QVBoxLayout()
         container.setLayout(layout)
 
-        # Filters / Input
+        self.menu = QMenuBar()
+        self.fileMenu = self.menu.addMenu("File")
+        self.fileMenu.addAction("Reset Preferences", self.reset_preferences)
+        self.fileMenu.addAction("Reset Rows and Columns", self.reset_rows_columns)
+        self.setMenuBar(self.menu)
+
         filter_layout = QHBoxLayout()
+        
+        # Site selection dropdown 
+        self.site_dropdown = QComboBox()
+        available_scrapers = list_available_scrapers()
+        if not available_scrapers:
+            logger.warning("No scrapers found! Check scrapers/ folder.")
+            available_scrapers = ["No scrapers available"]
+        self.site_dropdown.addItems(available_scrapers)
+        filter_layout.addWidget(QLabel("Site:"))
+        filter_layout.addWidget(self.site_dropdown)
+        
         self.hours_input = QLineEdit()
         self.hours_input.setPlaceholderText("Hours ago...")
         self.hours_input.setValidator(QIntValidator(0, 1000))
@@ -83,7 +103,6 @@ class JobHelperApp(QMainWindow):
         self.excluded_words_button = QPushButton("Excluded Words")
         self.excluded_words_button.clicked.connect(self.excluded_words)
 
-        # Layout arrangement
         filter_layout.addWidget(QLabel("Hours:"))
         filter_layout.addWidget(self.hours_input)
         filter_layout.addWidget(QLabel("Search:"))
@@ -96,15 +115,14 @@ class JobHelperApp(QMainWindow):
         filter_layout.addWidget(self.status_label)
         layout.addLayout(filter_layout)
 
-        # Job table
         self.table = QTableWidget()
-        self.table.setColumnCount(11)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
-            "ID", "Title", "Company", "Company Location", "Time", "Link", "Type", 
-            "Description Upper", "Description Lower", "Status", "is_new"
+            "ID", "Title", "Company", "Job Location", "Time", "Link", "Type", 
+            "Description", "Status", "is_new"
         ])
         self.table.setColumnHidden(0, True)
-        self.table.setColumnHidden(10, True)
+        self.table.setColumnHidden(9, True)
         self.table.verticalHeader().setDefaultSectionSize(60)
         self.table.cellDoubleClicked.connect(self.show_full_description)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -135,7 +153,6 @@ class JobHelperApp(QMainWindow):
         copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
         copy_shortcut.activated.connect(self.copy_selection_to_clipboard)
 
-        # Action buttons
         button_layout = QHBoxLayout()
         self.mark_seen_button = QPushButton("Mark Seen")
         self.mark_seen_button.clicked.connect(lambda: self.update_status("Seen"))
@@ -145,8 +162,54 @@ class JobHelperApp(QMainWindow):
         button_layout.addWidget(self.mark_applied_button)
         layout.addLayout(button_layout)
 
+    def reset_rows_columns(self):
+        """Reset all columns AND rows to default reasonable sizes"""
+        self.table.setColumnWidth(1, 200) 
+        self.table.setColumnWidth(2, 150) 
+        self.table.setColumnWidth(3, 120) 
+        self.table.setColumnWidth(4, 130)  
+        self.table.setColumnWidth(5, 100) 
+        self.table.setColumnWidth(6, 80)    
+        self.table.setColumnWidth(7, 250)  
+        self.table.setColumnWidth(8, 80)   
+
+        vertical_header = self.table.verticalHeader()
+        vertical_header.setDefaultSectionSize(60)
+        for row in range(self.table.rowCount()):
+            self.table.setRowHeight(row, 60)
+
+        logger.info("Column widths and row heights reset to defaults")
+
+    def load_jobs_with_filters(self, limit=50):
+        """Reload jobs and reapply current filters"""
+        current_hours = self.hours_input.text().strip()
+        current_search = self.search_input.text().strip()
+        hide_applied_checked = self.hide_applied_button.isChecked()
+        hide_seen_checked = self.hide_seen_button.isChecked()
+    
+        self.load_jobs(limit)
+    
+        if current_hours or current_search:
+            hours_value = None
+            if current_hours:
+                try:
+                    hours_value = int(current_hours)
+                except ValueError:
+                    pass
+            self.filtering_functionality(hours_value, current_search)
+    
+        if hide_applied_checked:
+            self.hide_functionality("Applied", self.hide_applied_button)
+        if hide_seen_checked:
+            self.hide_functionality("Seen", self.hide_seen_button)
+
+    def reset_preferences(self):
+        self.settings.clear()
+        self.never_show_delete_warning = False
+        QMessageBox.information(self, "Reset Successful", "Preferences have been reset successfully!")
+        logger.info("Preferences reset")
+
     def show_table_menu(self, pos):
-        # Context Menu
         row = self.table.rowAt(pos.y())
         col = self.table.columnAt(pos.x())
         if row == -1 or col == -1:
@@ -156,7 +219,48 @@ class JobHelperApp(QMainWindow):
         menu.addAction("Copy Selection", self.copy_selection_to_clipboard)
         menu.addAction("Mark Seen", lambda: self.update_status("Seen"))
         menu.addAction("Mark Applied", lambda: self.update_status("Applied"))
+        menu.addAction("Reset Status", lambda: self.update_status(None))
+        menu.addAction("Delete Job", self.delete_job)
         menu.popup(global_pos)
+
+    def delete_job(self):
+        """Delete selected jobs from DB and table with confirmation"""
+        job_ids_to_delete = set()
+        for item in self.table.selectedItems():
+            row = item.row()
+            job_id = int(self.table.item(row, 0).text())
+            job_ids_to_delete.add(job_id)
+
+        if not job_ids_to_delete:
+            return
+
+        if not self.never_show_delete_warning:
+            warning = QMessageBox(self)
+            checkbox = QCheckBox(warning)
+            checkbox.setText("Never show this again")
+            warning.setIcon(QMessageBox.Icon.Warning)
+            warning.setWindowTitle("Confirm Deletion")
+            warning.setText(f"This will delete {len(job_ids_to_delete)} job(s)!")
+            warning.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+            warning.setCheckBox(checkbox)
+            ret = warning.exec()
+
+            if ret != QMessageBox.StandardButton.Ok:
+                logger.info("User cancelled delete operation")
+                return
+
+            if checkbox.isChecked():
+                self.never_show_delete_warning = True
+                self.settings.setValue("never_show_delete_warning", True)
+
+        for job_id in job_ids_to_delete:
+            try:
+                self.db.delete_job(job_id)
+                logger.info(f"Deleted job ID: {job_id}")
+            except Exception as e:
+                logger.error(f"Error deleting job {job_id}: {e}")
+
+        self.load_jobs_with_filters()
 
     def save_excluded_words(self, titles, companies):
         """Save excluded titles and companies into the JSON file."""
@@ -170,7 +274,7 @@ class JobHelperApp(QMainWindow):
     def load_excluded_words(self):
         """Load excluded titles and companies from the JSON file."""
         if not os.path.exists(self.excluded_words_file):
-            print("Excluded words file not found, using defaults.")
+            logger.warning("Excluded words file not found, using defaults")
             return [], []
 
         with open(self.excluded_words_file, "r", encoding="utf-8") as f:
@@ -179,7 +283,7 @@ class JobHelperApp(QMainWindow):
                 titles = data.get("RAW_KEYWORDS_TO_EXCLUDE_TITLES", [])
                 companies = data.get("RAW_KEYWORDS_TO_EXCLUDE_COMPANIES", [])
             except json.JSONDecodeError:
-                print("Error decoding excluded words file.")
+                logger.error("Error decoding excluded words file")
                 return [], []
 
         return titles, companies
@@ -192,7 +296,6 @@ class JobHelperApp(QMainWindow):
         dialog.resize(500, 400) 
         dialog_layout = QVBoxLayout(dialog)
     
-        # Excluded Titles
         title_label = QLabel("Excluded Titles (one per line):")
         title_text = QTextEdit()
         title_text.setPlainText("\n".join(self.exclude_titles)) 
@@ -200,7 +303,6 @@ class JobHelperApp(QMainWindow):
         title_text.setPlaceholderText("Enter titles to exclude, one per line.")
         title_text.setStyleSheet("font-family: monospace;")
     
-        # Excluded Companies
         company_label = QLabel("Excluded Companies (one per line):")
         company_text = QTextEdit()
         company_text.setPlainText("\n".join(self.exclude_companies))
@@ -208,13 +310,11 @@ class JobHelperApp(QMainWindow):
         company_text.setPlaceholderText("Enter companies to exclude, one per line.")
         company_text.setStyleSheet("font-family: monospace;")
     
-        # Layout
         dialog_layout.addWidget(title_label)
         dialog_layout.addWidget(title_text)
         dialog_layout.addWidget(company_label)
         dialog_layout.addWidget(company_text)
     
-        # Save / Cancel buttons
         button_layout = QHBoxLayout()
     
         def handle_save():
@@ -228,8 +328,10 @@ class JobHelperApp(QMainWindow):
 
                 dialog.accept()
                 QMessageBox.information(self, "Success", "Excluded words saved successfully!")
+                logger.info("Excluded words saved successfully")
             
             except Exception as e:
+                logger.error(f"Failed to save excluded words: {e}")
                 QMessageBox.warning(self, "Error", f"Failed to save excluded words: {e}")
     
         save_btn = QPushButton("Save")
@@ -256,7 +358,6 @@ class JobHelperApp(QMainWindow):
         combo.addItems(map(str, range(min_value, max_value + 1)))
         layout.addWidget(combo)
 
-        # OK / Cancel buttons
         button_layout = QHBoxLayout()
         ok_btn = QPushButton("OK")
         ok_btn.clicked.connect(dialog.accept)
@@ -279,7 +380,7 @@ class JobHelperApp(QMainWindow):
             try:
                 hours_value = int(hours_text)
             except ValueError:
-                print(f"Invalid hours input: {hours_text}")
+                logger.warning(f"Invalid hours input: {hours_text}")
 
         self.filtering_functionality(hours_value, search_text)
 
@@ -292,8 +393,6 @@ class JobHelperApp(QMainWindow):
             time_posted_item = self.table.item(row, 4)
             link_item = self.table.item(row, 5)
             type_item = self.table.item(row, 6)
-            description_upper_item = self.table.item(row, 7)
-            description_lower_item = self.table.item(row, 8)
         
             matches_time = True
             matches_search = True
@@ -308,18 +407,18 @@ class JobHelperApp(QMainWindow):
                         matches_time = True 
                 except Exception as e:
                     matches_time = True
-                    print(f"Something went wrong {e}")
+                    logger.error(f"Error parsing time for filtering: {e}")
 
             if search_string.strip():
                 try:  
                     search_lower = search_string.lower()
                     matches_search = any(
                         search_lower in (item.text().lower() if item else "")
-                        for item in [title_item, company_item, location_item, link_item, type_item, description_upper_item, description_lower_item]
+                        for item in [title_item, company_item, location_item, link_item, type_item]
                     )
                 except Exception as e:
                     matches_search = True
-                    print(f"Error during search filtering: {e}")
+                    logger.error(f"Error during search filtering: {e}")
         
             should_show = matches_time and matches_search
             self.table.setRowHidden(row, not should_show)
@@ -328,7 +427,7 @@ class JobHelperApp(QMainWindow):
         hide_rows = button.isChecked()
 
         for row in range(self.table.rowCount()):
-            status_item = self.table.item(row, 9)
+            status_item = self.table.item(row, 8)
 
             if status_item and status_item.text() == object:
                 if hide_rows:
@@ -339,8 +438,7 @@ class JobHelperApp(QMainWindow):
                     self.table.showRow(row)
 
     def show_full_description(self, row, column):
-        # Description Upper = col 7, Description Lower = col 8
-        if column in (7, 8):
+        if column == 7:
             text = self.table.item(row, column).text()
             QMessageBox.information(self, "Full Description", text)
 
@@ -349,77 +447,67 @@ class JobHelperApp(QMainWindow):
         try:
             jobs = self.db.get_jobs(limit=limit)
             self.table.setRowCount(len(jobs))
-            print(f"Loading {len(jobs)} jobs into table")
+            logger.info(f"Loading {len(jobs)} jobs into table")
 
             for row_idx, job in enumerate(jobs):
 
-                # ID (hidden)
                 self.table.setItem(row_idx, 0, QTableWidgetItem(str(job["id"])))
 
-                # Title
                 title_item = QTableWidgetItem(job["title"] or "")
                 title_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setColumnWidth(1, 200)
                 self.table.setItem(row_idx, 1, title_item)
 
-                # Company
                 company_item = QTableWidgetItem(job["company_name"] or "")
                 company_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setColumnWidth(2, 150)
                 self.table.setItem(row_idx, 2, company_item)
 
-                # Company Location
                 location_item = QTableWidgetItem(job["company_location"] or "")
                 location_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setColumnWidth(3, 120)
                 self.table.setItem(row_idx, 3, location_item)
 
-                # Time Posted
                 time_item = QTableWidgetItem(str(job["time_posted"]) if job["time_posted"] else "")
                 time_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setColumnWidth(4, 130)
                 self.table.setItem(row_idx, 4, time_item)
 
-                # Link
                 link_item = QTableWidgetItem(job["link"] or "")
                 link_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setColumnWidth(5, 100)
                 self.table.setItem(row_idx, 5, link_item)
 
-                # Type
                 type_item = QTableWidgetItem(job["type"] or "")
                 type_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setColumnWidth(6, 80)  
                 self.table.setItem(row_idx, 6, type_item)
 
-                # Description Upper
-                desc_upper = job["description_upper"] or ""
-                desc_upper_item = QTableWidgetItem(desc_upper)
-                desc_upper_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-                desc_upper_item.setToolTip(desc_upper)
-                self.table.setItem(row_idx, 7, desc_upper_item)
+                description_TT = job["description"] or ""
+                desc_item = QTableWidgetItem(job["description"] or "")
+                desc_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+                desc_item.setToolTip(description_TT)
+                self.table.setColumnWidth(7, 250)
+                self.table.setItem(row_idx, 7, desc_item)
 
-                # Description Lower
-                desc_lower = job["description_lower"] or ""
-                desc_lower_item = QTableWidgetItem(desc_lower)
-                desc_lower_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-                desc_lower_item.setToolTip(desc_lower)
-                self.table.setItem(row_idx, 8, desc_lower_item)
-
-                # Status
                 status_item = QTableWidgetItem(job["status"] or "")
                 status_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                self.table.setItem(row_idx, 9, status_item)
+                self.table.setColumnWidth(8, 80)
+                self.table.setItem(row_idx, 8, status_item)
 
-                # is_new (hidden)
                 item = QTableWidgetItem("")
                 item.setData(Qt.ItemDataRole.UserRole, job["is_new"])
-                self.table.setItem(row_idx, 10, item)
+                self.table.setItem(row_idx, 9, item)
 
                 if job["is_new"]:
                     self.table.showRow(row_idx)
 
             self.table.setWordWrap(True)
             self.table.resizeColumnToContents(3)
-            self.table.setColumnWidth(7, 250)  # Description Upper
-            self.table.setColumnWidth(8, 250)  # Description Lower
             
         except Exception as e:
-            print(f"Error loading jobs: {e}")
+            logger.error(f"Error loading jobs: {e}")
+            logger.debug(f"Job Data that failed: {job}")
             QMessageBox.warning(self, "Error", f"Failed to load jobs: {e}")
 
     def update_status(self, status):
@@ -430,25 +518,21 @@ class JobHelperApp(QMainWindow):
                 job_id = int(self.table.item(selected_row, 0).text())
                 self.db.update_job_status(job_id, status)
                 self.db.mark_job_seen(job_id)
-                self.table.setItem(selected_row, 9, QTableWidgetItem(status))  
-                self.load_jobs()  
-                print(f"Job {job_id} marked as {status}")
+                self.table.setItem(selected_row, 8, QTableWidgetItem(status))  
+                self.load_jobs_with_filters()
+                logger.info(f"Job {job_id} marked as {status}")
             except Exception as e:
-                print(f"Error updating job status: {e}")
+                logger.error(f"Error updating job status: {e}")
                 QMessageBox.warning(self, "Error", f"Failed to update job status: {e}")
 
     def toggle_scraper(self):
         """Start or stop the scraper subprocess"""
-        if self.excluded_words_button.isEnabled() and self.excluded_words_button.isEnabled() is False:
-            QMessageBox.warning(self, "Warning", "Cannot change excluded words while scraper is running.")
-            return
 
         if self.scraper_process and self.scraper_process.poll() is None:
             QTimer.singleShot(3000, self.stop_scraper)
             self.scrape_button.setText("Stopping...")
             self.scrape_button.setEnabled(False)
         else:
-            # Ask user for hours
             selected_hours = self.ask_for_number(
                 title="Select Hours",
                 label="How many hours back?",
@@ -457,20 +541,19 @@ class JobHelperApp(QMainWindow):
             )
             if selected_hours is not None:
                 config = {"hours": selected_hours}
-                print("User selected:", selected_hours)
+                logger.info(f"User selected scrape hours: {selected_hours}")
                 try:
                     with open("scraper_config.json", 'w', encoding="utf-8") as f:
                         json.dump(config, f, ensure_ascii=False, indent=2)
                     self.start_scraper()
                     self.excluded_words_button.setEnabled(False)
                 except Exception as e:
-                    print(f"Error writing config file: {e}")
+                    logger.error(f"Error writing config file: {e}")
                     QMessageBox.warning(self, "Error", "Could not save scraper configuration. Scraper will not start.")
 
     def start_scraper(self):
         """Start the standalone scraper subprocess"""
         try:
-            # Clean up any existing communication files
             for file_path in [self.status_file, self.jobs_file, self.stop_file]:
                 if os.path.exists(file_path):
                     try:
@@ -480,53 +563,78 @@ class JobHelperApp(QMainWindow):
             
             self.processed_lines = 0
             
-            # Start the standalone scraper process
-            script_path = "standalone_scraper.py"
-            if not os.path.exists(script_path):
-                QMessageBox.warning(self, "Error", f"Scraper script not found: {script_path}")
-                return
+            # Get selected site from dropdown
+            selected_site = self.site_dropdown.currentText()
             
+            if getattr(sys, 'frozen', False):
+                current_dir = os.path.dirname(sys.executable)
+                scraper_executable = os.path.join(current_dir, "JobHunterScraper.exe")
+            
+                if not os.path.exists(scraper_executable):
+                    logger.error(f"Scraper executable not found: {scraper_executable}")
+                    QMessageBox.warning(self, "Error", f"Scraper executable not found: {scraper_executable}")
+                    return
+                
+                cmd = [scraper_executable]
+                work_dir = current_dir
+            
+            else:
+                script_path = "standalone_scraper.py"
+                if not os.path.exists(script_path):
+                    logger.error(f"Scraper script not found: {script_path}")
+                    QMessageBox.warning(self, "Error", f"Scraper script not found: {script_path}")
+                    return
+            
+                cmd = [sys.executable, script_path]
+                work_dir = os.getcwd()
+        
+            logger.info(f"Starting scraper with command: {cmd}")
+            logger.info(f"Working directory: {work_dir}")
+            logger.info(f"Selected site: {selected_site}")
+            
+            # Pass site via environment variable
+            env = {**os.environ, "SCRAPER_SITE": selected_site}
+        
             self.scraper_process = subprocess.Popen(
-                [sys.executable, script_path],
-                cwd=os.getcwd(),
+                cmd,
+                cwd=work_dir,
+                env=env,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
             )
             
-            # Start monitoring the scraper
-            self.scraper_timer.start(2000)  # Check every 2 seconds
+            self.scraper_timer.start(2000)
             self.scrape_button.setText("Stop Scraping")
-            self.status_label.setText("Starting scraper...")
+            self.status_label.setText(f"Starting {selected_site} scraper...")
             
-            print(f"Started scraper subprocess with PID: {self.scraper_process.pid}")
+            logger.info(f"Started scraper subprocess with PID: {self.scraper_process.pid}")
             
         except Exception as e:
+            logger.error(f"Error starting scraper: {e}")
             QMessageBox.critical(self, "Error", f"Failed to start scraper: {e}")
-            print(f"Error starting scraper: {e}")
 
     def stop_scraper(self):
         """Stop the scraper subprocess gracefully"""
         try:
-            # Create stop flag file
             with open(self.stop_file, 'w') as f:
                 f.write("stop")
             
             self.status_label.setText("Stopping scraper...")
-            print("Stop flag created, waiting for scraper to stop...")
+            logger.info("Stop flag created, waiting for scraper to stop...")
                 
             if self.scraper_process:
                 try:
                     self.scraper_process.wait(timeout=15)
                 except subprocess.TimeoutExpired:
-                    print("Scraper didn't stop gracefully, terminating...")
+                    logger.warning("Scraper didn't stop gracefully, terminating...")
                     self.scraper_process.terminate()
                     try:
                         self.scraper_process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
-                        print("Force killing scraper process...")
+                        logger.warning("Force killing scraper process...")
                         self.scraper_process.kill()
             
         except Exception as e:
-            print(f"Error stopping scraper: {e}")
+            logger.error(f"Error stopping scraper: {e}")
         finally:
             self.scraper_cleanup()
             self.excluded_words_button.setEnabled(True)
@@ -540,7 +648,6 @@ class JobHelperApp(QMainWindow):
         self.scraper_process = None
         self.excluded_words_button.setEnabled(True)
         
-        # Clean up communication files
         for file_path in [self.stop_file]:
             if os.path.exists(file_path):
                 try:
@@ -548,21 +655,17 @@ class JobHelperApp(QMainWindow):
                 except:
                     pass
         
-        # Final load of jobs
-        self.load_jobs()
+        self.load_jobs_with_filters()
         QMessageBox.information(self, "Scraper", "Scraping Complete!")
-        print("Scraper cleanup complete")
+        logger.info("Scraper cleanup complete")
 
     def check_scraper_status(self):
         """Check scraper status and process new job data"""
-        # Check if process is still running
         if self.scraper_process and self.scraper_process.poll() is not None:
-            # Process has ended
-            print("Scraper process has ended")
+            logger.info("Scraper process has ended")
             self.scraper_cleanup()
             return
         
-        # Read and display status
         try:
             if os.path.exists(self.status_file):
                 with open(self.status_file, 'r', encoding='utf-8') as f:
@@ -573,7 +676,6 @@ class JobHelperApp(QMainWindow):
                 jobs_scraped = status_data.get('jobs_scraped', 0)
                 current_page = status_data.get('current_page', 1)
                 
-                # Update UI
                 if status == 'running':
                     self.status_label.setText(f"Scraping page {current_page} ({jobs_scraped} jobs found)")
                 elif status == 'completed':
@@ -592,7 +694,7 @@ class JobHelperApp(QMainWindow):
                     self.status_label.setText(f"Status: {status}")
         
         except Exception as e:
-            print(f"Error reading status file: {e}")
+            logger.error(f"Error reading status file: {e}")
         
         self.process_new_jobs()
 
@@ -616,48 +718,46 @@ class JobHelperApp(QMainWindow):
                 try:
                     job_data = json.loads(line)
 
-                    # Insert into database
                     try:
                         self.db.insert_job_to_db(job_data)
                         jobs_processed += 1
-                        print(f"Successfully inserted: {job_data.get('Title', 'Unknown')}")
+                        logger.info(f"Successfully inserted: {job_data.get('Title', 'Unknown')}")
                     except Exception as e:
-                        print(f"Error inserting job to DB: {type(e).__name__}: {str(e)}")
-                        print(f"Job data that failed: {job_data}")
+                        logger.error(f"Error inserting job to DB: {type(e).__name__}: {str(e)}")
+                        logger.debug(f"Job data that failed: {job_data}")
                         
                 except json.JSONDecodeError as e:
-                    print(f"Error parsing job data: {e}")
+                    logger.error(f"Error parsing job data: {e}")
                     continue
             
             self.processed_lines = len(lines)
             
             if jobs_processed > 0:
-                print(f"Processed {jobs_processed} new jobs, refreshing table...")
-                self.load_jobs()
+                logger.info(f"Processed {jobs_processed} new jobs, refreshing table...")
+                self.load_jobs_with_filters()
                 
         except Exception as e:
-            print(f"Error processing job data: {e}")
+            logger.error(f"Error processing job data: {e}")
 
     def closeEvent(self, event):
         """Handle application close - make sure to stop scraper process"""
         if self.scraper_process and self.scraper_process.poll() is None:
-            print("Application closing, stopping scraper...")
+            logger.info("Application closing, stopping scraper...")
             self.stop_scraper()
             
             if self.scraper_process:
                 try:
                     self.scraper_process.wait(timeout=6)
                 except subprocess.TimeoutExpired:
-                    print("Force killing scraper on app close...")
+                    logger.warning("Force killing scraper on app close...")
                     self.scraper_process.kill()
         
-        # Close database connection
         if hasattr(self, 'db'):
             try:
                 self.db.close()
-                print("Database connection closed")
+                logger.info("Database connection closed")
             except Exception as e:
-                print(f"Error closing database: {e}")
+                logger.error(f"Error closing database: {e}")
         
         event.accept()
 
@@ -680,7 +780,7 @@ class JobHelperApp(QMainWindow):
                 clipboard_text += "\t".join(row_data) + "\n"
 
         QApplication.clipboard().setText(clipboard_text.strip())
-        print("Copied selection to clipboard.")
+        logger.info("Copied selection to clipboard")
 
         
 # ---------------------------
@@ -688,11 +788,11 @@ class JobHelperApp(QMainWindow):
 # ---------------------------
 if __name__ == "__main__":
     try:
-        db = Database(host=host, dbname=dbname, user=user, password=password)
+        db = Database()
         app = QApplication(sys.argv)
         window = JobHelperApp(db)
         window.show()
         sys.exit(app.exec())
     except Exception as e:
-        print(f"Failed to start application: {e}")
+        logging.critical(f"Failed to start application: {e}")
         sys.exit(1)

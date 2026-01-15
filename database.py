@@ -1,16 +1,74 @@
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 import traceback
+import logging
+import sys
+from pathlib import Path
+from appdirs import user_data_dir
+
+logger = logging.getLogger("job_helper.db")
+logger.setLevel(logging.DEBUG)
+log_dir = Path("logs")
+
+if not logger.handlers:
+    log_file = log_dir / "job_helper_DB.log"
+    fh = logging.FileHandler(log_file, encoding='utf-8')
+    ch = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
 
 class Database:
-    def __init__(self, host, dbname, user, password):
-        self.conn = psycopg2.connect(
-            host=host,
-            dbname=dbname,
-            user=user,
-            password=password
-        )
-        self.cur = self.conn.cursor(cursor_factory=RealDictCursor) 
+    def __init__(self):
+        data_dir = Path(user_data_dir("JobScraper", appauthor=False)) # C:\Users\<USERNAME>\AppData\Local\JobScraper\
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        if getattr(sys, 'frozen', False):
+            db_path = data_dir / "jhdb.db"
+        else:
+            db_path = data_dir / "jhdb_test.db"
+
+        self.conn = sqlite3.connect(db_path)
+        self.conn.row_factory = sqlite3.Row
+        self.cur = self.conn.cursor()
+
+        self.cur.execute("PRAGMA foreign_keys = ON;")
+
+        self.cur.execute("""
+        CREATE TABLE IF NOT EXISTS companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            location TEXT
+        );
+        """)
+
+        self.cur.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            company_id INTEGER NOT NULL,
+            time_posted TEXT,
+            link TEXT,
+            type TEXT,
+            description TEXT,
+            is_new BOOLEAN DEFAULT 1,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(title, company_id)
+        );
+        """)
+
+        self.cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER UNIQUE,
+            status TEXT,
+            timestamp TEXT DEFAULT (DATETIME('now')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+        );
+        """)
+
+        self.conn.commit()
 
     def close(self):
         self.cur.close()
@@ -26,8 +84,7 @@ class Database:
                 j.time_posted,
                 j.link,
                 j.type,
-                j.description_upper,
-                j.description_lower,
+                j.description,
                 ua.status,
                 j.is_new
             FROM jobs j
@@ -45,12 +102,12 @@ class Database:
             self.cur.execute("""
                 UPDATE jobs
                 SET is_new = FALSE
-                WHERE id = %s
+                WHERE id = ?
             """, (job_id,))
             self.conn.commit()
-            print(f"Job {job_id} marked as seen.")
+            logger.info(f"Job {job_id} marked as seen.")
         except Exception as e:
-            print(f"Error marking job as seen: {e}")
+            logger.error(f"Error marking job as seen: {e}")
             self.conn.rollback()
             raise
 
@@ -58,56 +115,53 @@ class Database:
         try:
             self.cur.execute("""
                 INSERT INTO user_actions (job_id, status)
-                VALUES (%s, %s)
-                ON CONFLICT (job_id) DO UPDATE
-                SET status = EXCLUDED.status;
+                VALUES (?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET status = EXCLUDED.status
+            """, (job_id, status))
 
+            self.cur.execute("""
                 UPDATE jobs
                 SET is_new = FALSE
-                WHERE id = %s;
-            """, (job_id, status, job_id))
+                WHERE id = ?
+            """, (job_id,))
+
             self.conn.commit()
-            print(f"Status updated for job {job_id}: {status}")
+            logger.info(f"Status updated for job {job_id}: {status}")
         except Exception as e:
-            print(f"Error updating job status: {e}")
+            logger.error(f"Error updating job status: {e}")
             self.conn.rollback()
             raise
 
     def insert_job_to_db(self, job_data):
         try:
-            print(f"Attempting to insert job: {job_data.get('Title', 'Unknown Title')}")
+            logger.info(f"Attempting to insert job: {job_data.get('Title', 'Unknown Title')}")
             
-            # Validate required fields
-            required_fields = ['Title', 'Company', 'Time', 'Link', 'Location', 'Type', 'Description Upper', 'Description Lower']
+            required_fields = ['Title', 'Company', 'Time', 'Link', 'Location', 'Type', 'Description']
             for field in required_fields:
                 if field not in job_data:
                     raise ValueError(f"Missing required field: {field}")
             
-            # Clean and validate data
             company_name = str(job_data['Company']).strip()[:255] if job_data['Company'] else 'Unknown'
             location = str(job_data['Location']).strip()[:255] if job_data['Location'] else 'Unknown'
             title = str(job_data['Title']).strip()[:500] if job_data['Title'] else 'Unknown'
             link = str(job_data['Link']).strip()[:500] if job_data['Link'] else ''
             job_type = str(job_data['Type']).strip()[:100] if job_data['Type'] else 'Unknown'
-            desc_upper = str(job_data['Description Upper']).strip() if job_data['Description Upper'] else ''
-            desc_lower = str(job_data['Description Lower']).strip() if job_data['Description Lower'] else ''
+            desc = str(job_data['Description']).strip() if job_data['Description'] else ''
             
             if not company_name or company_name == 'Unknown':
                 raise ValueError("Company name cannot be empty")
             
-            # Insert company if it doesn't exist
-            print(f"Inserting/finding company: {company_name}")
+            logger.info(f"Inserting/finding company: {company_name}")
             self.cur.execute("""
                 INSERT INTO companies (name, location)
-                VALUES (%s, %s)
+                VALUES (?, ?)
                 ON CONFLICT (name) DO NOTHING
                 RETURNING id
             """, (company_name, location))
         
             result = self.cur.fetchone()
             if result is None:
-                # Company already exists, get its ID
-                self.cur.execute("SELECT id FROM companies WHERE name = %s", (company_name,))
+                self.cur.execute("SELECT id FROM companies WHERE name = ?", (company_name,))
                 result = self.cur.fetchone()
                 if result is None:
                     raise ValueError(f"Could not find or create company: {company_name}")
@@ -115,13 +169,12 @@ class Database:
             else:
                 company_id = result['id']
             
-            print(f"Company ID: {company_id}")
+            logger.info(f"Company ID: {company_id}")
 
-            # Insert job with duplicate-safe logic
-            print("Inserting job...")
+            logger.info("Inserting job...")
             self.cur.execute("""
-                INSERT INTO jobs (title, company_id, time_posted, link, type, description_upper, description_lower)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO jobs (title, company_id, time_posted, link, type, description)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (title, company_id) DO NOTHING
             """, (
                 title,
@@ -129,20 +182,29 @@ class Database:
                 job_data['Time'],
                 link,
                 job_type,
-                desc_upper,
-                desc_lower
+                desc
             ))
 
-            # Check if the job was actually inserted
             if self.cur.rowcount == 0:
-                print(f"Job already exists (duplicate): {title}")
+                logger.warning(f"Job already exists (duplicate): {title}")
             else:
-                print(f"Successfully inserted new job: {title}")
+                logger.info(f"Successfully inserted new job: {title}")
             self.conn.commit()
             
         except Exception as e:
-            print(f"Database insertion failed: {type(e).__name__}: {str(e)}")
-            print(f"Job data: {job_data}")
+            logger.error(f"Database insertion failed: {type(e).__name__}: {str(e)}")
+            logger.debug(f"Job data: {job_data}")
             traceback.print_exc()
+            self.conn.rollback()
+            raise
+
+    def delete_job(self, job_id):
+        try:
+            self.cur.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            self.conn.commit()
+            logger.info(f"Database: Job {job_id} deleted.")
+        except Exception as e:
+            logger.error(f"Data deletion failed: {type(e).__name__}: {str(e)}")
+            logger.debug(f"Error deleting job: {job_id}")
             self.conn.rollback()
             raise

@@ -320,6 +320,7 @@ excludedwords.py
 scraper_config.json
 scraper_status.json
 scraped_jobs.jsonl
+softwareforjobhunters_showcase/scrapers/configs/
 
 # Cake - Uncomment if you are using it
 # tools/**
